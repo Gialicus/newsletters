@@ -2,7 +2,8 @@
 
 use std::net::TcpListener;
 
-use newsletters::startup;
+use newsletters::{configuration::get_configuration, startup};
+use sqlx::{Connection, PgConnection};
 
 fn spawn_app() -> String {
     let listner = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address");
@@ -28,6 +29,11 @@ async fn health_check_works() {
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_form_data() {
     let address = spawn_app();
+    let configuration = get_configuration().expect("Fail to read configuration");
+    let connection_string = configuration.database.connection_string();
+    let _connection = PgConnection::connect(&connection_string)
+        .await
+        .expect("Fail to connect to Postgres");
     let client = reqwest::Client::new();
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = client
