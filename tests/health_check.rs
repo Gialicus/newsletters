@@ -3,19 +3,23 @@
 use std::net::TcpListener;
 
 use newsletters::{configuration::get_configuration, startup};
-use sqlx::{Connection, PgConnection};
+use sqlx::{Connection, PgConnection, PgPool};
 
-fn spawn_app() -> String {
+async fn spawn_app() -> String {
     let listner = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address");
     let port = listner.local_addr().unwrap().port();
-    let server = startup::run(listner).expect("Failed to bind address");
+    let configuration = get_configuration().expect("Failed to read configuration");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Failt to connect Postgress");
+    let server = startup::run(listner, connection_pool.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
     format!("http://127.0.0.1:{}", port)
 }
 
 #[tokio::test]
 async fn health_check_works() {
-    let address = spawn_app();
+    let address = spawn_app().await;
     let client = reqwest::Client::new();
     let response = client
         .get(format!("{}/health_check", &address))
@@ -28,7 +32,7 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_form_data() {
-    let address = spawn_app();
+    let address = spawn_app().await;
     let configuration = get_configuration().expect("Fail to read configuration");
     let connection_string = configuration.database.connection_string();
     let mut connection = PgConnection::connect(&connection_string)
@@ -54,7 +58,7 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
 
 #[tokio::test]
 async fn subscribe_returns_a_400_when_data_is_missing() {
-    let address = spawn_app();
+    let address = spawn_app().await;
     let client = reqwest::Client::new();
     let test_cases = vec![
         ("name=le%20guin", "missing email"),
