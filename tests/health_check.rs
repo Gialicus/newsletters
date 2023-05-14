@@ -2,19 +2,48 @@
 
 use std::net::TcpListener;
 
-use newsletters::{configuration::get_configuration, startup};
-use sqlx::{Connection, PgConnection, PgPool};
+use newsletters::{
+    configuration::{get_configuration, DatabaseSettings},
+    startup,
+};
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use uuid::Uuid;
 
-async fn spawn_app() -> String {
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
     let listner = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address");
     let port = listner.local_addr().unwrap().port();
-    let configuration = get_configuration().expect("Failed to read configuration");
-    let connection_pool = PgPool::connect(&configuration.database.connection_string())
-        .await
-        .expect("Failt to connect Postgress");
+    let address = format!("http://127.0.0.1:{}", port);
+    let mut configuration = get_configuration().expect("Failed to read configuration");
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    let connection_pool = configure_database(&configuration.database).await;
     let server = startup::run(listner, connection_pool.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
-    format!("http://127.0.0.1:{}", port)
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+pub async fn configure_database(confi: &DatabaseSettings) -> PgPool {
+    let mut connection = PgConnection::connect(&confi.connection_string_without_db())
+        .await
+        .expect("Fail to connect Postgres");
+    connection
+        .execute(format!(r#"CREATE DATABASE "{}";"#, confi.database_name).as_str())
+        .await
+        .expect("Fail to create database");
+    let connection_pool = PgPool::connect(&confi.connection_string())
+        .await
+        .expect("Fail to connect Postgres");
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Fail to migrate database");
+    connection_pool
 }
 
 #[tokio::test]
@@ -22,7 +51,7 @@ async fn health_check_works() {
     let address = spawn_app().await;
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("{}/health_check", &address))
+        .get(format!("{}/health_check", &address.address))
         .send()
         .await
         .expect("Failed to excute request");
@@ -41,7 +70,7 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
     let client = reqwest::Client::new();
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = client
-        .post(format!("{}/subscriptions", &address))
+        .post(format!("{}/subscriptions", &address.address))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(body)
         .send()
@@ -67,7 +96,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
     ];
     for (invalid_body, error_message) in test_cases {
         let response = client
-            .post(format!("{}/subscriptions", &address))
+            .post(format!("{}/subscriptions", &address.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(invalid_body)
             .send()
