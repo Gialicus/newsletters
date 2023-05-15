@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
-    let subscriber = get_subscriber("newsletters".into(), "info".into());
+    let subscriber = get_subscriber("newsletters".into(), "info".into(), std::io::stdout);
     init_subscriber(subscriber);
     let configuration = get_configuration().expect("Fail to read configuration");
     let connection_pool = PgPool::connect(&configuration.database.connection_string())
