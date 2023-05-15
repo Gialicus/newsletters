@@ -5,9 +5,16 @@ use std::net::TcpListener;
 use newsletters::{
     configuration::{get_configuration, DatabaseSettings},
     startup,
+    telemetry::{get_subscriber, init_subscriber},
 };
+use once_cell::sync::Lazy;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
+
+static TRACING: Lazy<()> = Lazy::new(|| {
+    let subscriber = get_subscriber("test".into(), "debug".into());
+    init_subscriber(subscriber);
+});
 
 pub struct TestApp {
     pub address: String,
@@ -15,6 +22,7 @@ pub struct TestApp {
 }
 
 async fn spawn_app() -> TestApp {
+    Lazy::force(&TRACING);
     let listner = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address");
     let port = listner.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
