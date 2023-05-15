@@ -8,6 +8,7 @@ use newsletters::{
     telemetry::{get_subscriber, init_subscriber},
 };
 use once_cell::sync::Lazy;
+use secrecy::ExposeSecret;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -44,14 +45,15 @@ async fn spawn_app() -> TestApp {
     }
 }
 pub async fn configure_database(confi: &DatabaseSettings) -> PgPool {
-    let mut connection = PgConnection::connect(&confi.connection_string_without_db())
-        .await
-        .expect("Fail to connect Postgres");
+    let mut connection =
+        PgConnection::connect(&confi.connection_string_without_db().expose_secret())
+            .await
+            .expect("Fail to connect Postgres");
     connection
         .execute(format!(r#"CREATE DATABASE "{}";"#, confi.database_name).as_str())
         .await
         .expect("Fail to create database");
-    let connection_pool = PgPool::connect(&confi.connection_string())
+    let connection_pool = PgPool::connect(&confi.connection_string().expose_secret())
         .await
         .expect("Fail to connect Postgres");
     sqlx::migrate!("./migrations")
@@ -77,11 +79,6 @@ async fn health_check_works() {
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_form_data() {
     let address = spawn_app().await;
-    let configuration = get_configuration().expect("Fail to read configuration");
-    let connection_string = configuration.database.connection_string();
-    let mut connection = PgConnection::connect(&connection_string)
-        .await
-        .expect("Fail to connect to Postgres");
     let client = reqwest::Client::new();
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = client
@@ -93,7 +90,7 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
         .expect("Failed to excute request");
     assert_eq!(200, response.status().as_u16());
     let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
-        .fetch_one(&mut connection)
+        .fetch_one(&address.db_pool)
         .await
         .expect("Failed to fetch saved subscriptions");
     assert_eq!(saved.email, "ursula_le_guin@gmail.com");
